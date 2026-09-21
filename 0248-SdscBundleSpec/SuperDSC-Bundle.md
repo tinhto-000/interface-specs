@@ -1,49 +1,151 @@
-# **SuperDSC-Bundle Interface Specification**
+# SuperDSC-Bundle Interface Specification
 
-**Authors:**
-* @lupalby
-* @Prasanth-Chatarasi
-* @bmahjour
-* @viji560
-* @vswagath1989
+## Summary
 
-## **Summary**
+This document specifies the `SuperDSC-Bundle`, the interface between the torch-spyre frontend compiler and the Spyre backend compiler (Deeptools).
 
-This RFC describes the `SuperDSC-Bundle`, the interface between torch-spyre frontend compiler and the Spyre backend compiler (Deeptools).
+## Scope
 
-## **Motivation**
-The interface is essential to connect the torch-spyre frontend compiler with the Deeptools backend compiler to successfully map any operation to Spyre.
+A SuperDSC-Bundle is the unit the frontend hands to the backend for one complex
+kernel. This specification defines two things:
 
-## **Proposed Implementation**
+- the **SDSC JSON document format** — one document per Spyre operation, describing
+  the operation, its tensors, and how its work is divided across cores;
+- the **`sdscbundle` MLIR dialect** — the operations that sequence those documents,
+  allocate device memory, and bind runtime values.
 
-`SuperDSC-Bundle` views the sypre hardware at the data-parallel level of hardware abstraction. In this abstraction, Sypre is viewed as having multiple cores, with each core having a compute engine and a scratchpad memory. The cores are interfaced with each other and off-chip memory banks using an on-chip interconnect fabric.
+It defines what a producer may write and what a consumer accepts. It does not
+specify how either compiler is implemented, how work should be divided for
+performance, or how to author MLIR beyond the constraints stated here.
+
+**Audience.** A reader implementing a producer of bundles, or a consumer of them.
+Familiarity with MLIR and with the Spyre data-parallel execution model is assumed;
+[`guide/`](guide/) is the introductory material and forms no part of this
+specification.
+
+**Conformance** is defined in [Conformance](spec/json/conformance.md): a conforming
+document validates against [`sdscbundle-schema.json`](spec/sdscbundle-schema.json),
+and satisfies the constraints stated on the object pages that the schema cannot
+express.
+
+## Normative references
+
+| Reference | Role |
+|---|---|
+| [`spec/sdscbundle-schema.json`](spec/sdscbundle-schema.json) | The machine-readable contract for the JSON document format. Carries its own `version`. |
+| [JSON Schema draft 2020-12](https://json-schema.org/draft/2020-12) | The dialect the schema is written in. |
+| [MLIR SCF](https://mlir.llvm.org/docs/Dialects/SCFDialect/), [Arith](https://mlir.llvm.org/docs/Dialects/ArithDialect/), [Affine](https://mlir.llvm.org/docs/Dialects/Affine/) dialects | Upstream operations permitted in a bundle, with the restrictions in [Permitted upstream MLIR operations](spec/dialect/MLIR-bundle-API.md#permitted-upstream-mlir-operations). |
+| [torch-spyre](https://torch-spyre.readthedocs.io/) | The frontend that produces bundles, and the list of torch operations it supports. |
+
+## Terms
+
+| Term | Meaning |
+|---|---|
+| **SuperDSC** | The top-level object of an SDSC JSON document, describing one Spyre operation and its mapping across cores. |
+| **DSC** (DesignSpaceConfig) | One work division of a SuperDSC. A SuperDSC carries an array of them; with balanced work division a single entry suffices. |
+| **core** | A RaPiD core: one compute engine plus its LX scratchpad. Cores are indexed from `0`. |
+| **corelet** | A subdivision within a core. The corelet fold factor is `2`. |
+| **fold** | One level of subdivision of a dimension, with a `factor_` giving the number of slices at that level. Folds nest, and their factors multiply to the dimension's element count. |
+| **work division** | The assignment of an operation's dimension slices to cores, expressed by `numWkSlicesPerDim_` and `coreIdToWkSlice_` on the SuperDSC. |
+| **stick** | The innermost contiguous group of elements that is transferred and operated on as a unit. Its dimensions and sizes are given by `stickDimOrder_` and `stickSize_` in a `primaryDsInfo_` entry. |
+| **datastage** | A description of tile dimensions at one level of the hierarchy — a `dataStageParam_` entry, holding steady-state (`ss_`) and epilogue (`el_`) dimensions. |
+| **symbolic value** | A value not fixed at compile time — either a tensor start address or a dimension size — resolved before the job is launched. |
+
+## Execution model
+
+`SuperDSC-Bundle` views Spyre at the data-parallel level of hardware abstraction:
+multiple cores, each with a compute engine and a scratchpad memory, interfaced with
+each other and with off-chip memory banks over an on-chip interconnect fabric.
 
 <p align="center">
   <img src="data_parallel_hw_abstraction.png" alt="data_parallel_hw_abstraction" width="450"/>
 </p>
 <p align="center">
-  Figure 1. Hardware abstraction of multi-core accelerator embodied in `SuperDSC-Bundle`
-</p>  
+  Figure 1. Hardware abstraction of the multi-core accelerator embodied in `SuperDSC-Bundle`
+</p>
 
-`SuperDSC-Bundle` enables the frontend compilers to express data-parallel mappings of:
-* Complex kernels comprised of a sequence of operations
-* The work division (or computation split) across RaPiD cores of Spyre for each operation,
-* The placement of input/output tensors to each operation either in DDR memory or LX scratchpad of the RaPiD cores
-* Shapes of the operations and tensors is allowed to be static or symbolic
-* The start address of the tensors in DDR and LX is allowed be a fixed number or symbolic
+Against that abstraction, a bundle expresses:
 
-The `SuperDSC-Bundle` specification is used by the Deeptools backend compiler to produce `SpyreCode` containing the job binary, a job plan and other compiled artifacts. In the scenario, where either the start-address and/or shapes are symbolic, `SpyreCode` allows for the program binary to contain variables that need to be substituted or corrected before execution. The mechanism to effect program correction just-in-time before the job is launched onto spyre is also produced by the backend compiler as part of `SpyreCode`.
+* complex kernels comprising a sequence of operations;
+* the work division — the computation split — across RaPiD cores for each operation;
+* the placement of each operation's input and output tensors, in DDR memory or in the
+  LX scratchpad of a core;
+* operation and tensor shapes, either static or symbolic;
+* tensor start addresses in DDR and LX, either fixed or symbolic.
 
-NOTES:
-* Frontend/Backend compiler interface will transition to a new interface called Kernel Tile Intermediate Representation (KTIR) in the future (https://github.com/torch-spyre/torch-spyre/blob/main/RFCs/0682-KtirSpec/0682-KtirSpecRFC.md)
-* `SuperDSC` (without bundle capability) is the current interface between Deeptools frontend compiler and Deeptools backend compiler
-* `SpyreCode` is tracked through: https://github.com/torch-spyre/torch-spyre/issues/277
+The backend consumes a bundle to produce `SpyreCode`: the job binary, a job plan and
+other compiled artifacts. Where a start address or a shape is symbolic, `SpyreCode`
+carries variables to be substituted before execution, together with the mechanism
+that applies those substitutions just before the job is launched.
+
+### Related interfaces
+
+* `SuperDSC`, without bundle capability, is the interface between the Deeptools
+  frontend and backend compilers.
+* This interface is expected to be superseded by Kernel Tile Intermediate
+  Representation (KTIR); see the
+  [KTIR specification](https://github.com/torch-spyre/rfcs/blob/main/0682-KtirSpec/0682-KtirSpecRFC.md).
+* `SpyreCode` is tracked in
+  [torch-spyre#277](https://github.com/torch-spyre/torch-spyre/issues/277).
 
 ## Structure of SuperDSC-Bundle
 
 The backend expects the frontend to produce multiple output files, that work in conjuction to instruct the backend on how one or multiple programs can be compiled and executed in a sequence as part of a complex kernel. The expectation is to receive:
 * one or more sdsc.json files, each describing a Spyre operation
 * one mlir file with the SuperDsc-Bundle IR
+
+### Data format naming
+
+Data formats are named by their enumerated values throughout this specification —
+`SEN169_FP16`, `IEEE_FP32`, `SEN143_FP8`, `SENINT8` and so on. These are the values
+a `dataFormat_` field accepts; the full set is listed on
+[LabeledDataStructure](spec/json/labeleddatastructure.md#data-formats) and in the
+schema. Informal short forms are not used, so that a name in a table is always a
+value a producer can write.
+
+`SEN169_FP16` is DLFloat16, described in
+[DLFloat: A 16-b Floating Point Format Designed for Deep Learning Training and
+Inference](https://research.ibm.com/publications/dlfloat-a-16-b-floating-point-format-designed-for-deep-learning-training-and-inference).
+The conversion operations spell it `DL16` inside their own identifiers —
+`DL16TOFP32`, `FP32TODL16`, `FP8TODL16`, and their lowercase `opFuncName` strings.
+Those are operation names, spelled exactly as shown, and refer to the same format.
+
+### Specification contents
+
+The normative contract for both file kinds is in [`spec/`](spec/) — the JSON
+document format under [`spec/json/`](spec/json/) and the MLIR dialect under
+[`spec/dialect/`](spec/dialect/). This document is the entry point; the pages below
+are the specification.
+
+**Start here**
+
+| Page | What it covers |
+|---|---|
+| [Conformance](spec/json/conformance.md) | What makes a document conforming, what validation rejects, versioning |
+| [JSON Schema](spec/json/json-schema.md) | The machine-readable contract, [`sdscbundle-schema.json`](spec/sdscbundle-schema.json) |
+| [SDSC JSON API](spec/json/SDSC-json-api.md) | Overall file structure |
+| [Object Hierarchy](spec/json/JSON-object-Hierarchy.md) | How the objects nest |
+
+**The `sdscbundle` MLIR dialect**
+
+| Page | What it covers |
+|---|---|
+| [MLIR Bundle API](spec/dialect/MLIR-bundle-API.md) | Bundle container, `sdsc_execute`, `device_mem_allocate`, symbolic values, and the upstream MLIR operations permitted in a bundle |
+
+**JSON objects, by role**
+
+| Role | Pages |
+|---|---|
+| Top level | [SuperDsc](spec/json/superdsc-object.md), [DesignSpaceConfig](spec/json/designspaceconfig.md) |
+| Tensors | [LabeledDataStructure](spec/json/labeleddatastructure.md), [MemoryOrganization](spec/json/memoryorganization.md), [PrimaryDsInfo](spec/json/primarydsinfo.md), [DataStructDims](spec/json/datastructdims.md) |
+| Folding | [FoldProperty](spec/json/foldproperty.md), [FoldManager](spec/json/foldmanager.md) |
+| Layout | [Padding](spec/json/padding.md), [Stick Layout Constraints](spec/json/stick-layout-constraints.md) |
+| Execution | [DataStageParam](spec/json/datastageparam.md), [ScheduleTreeNode](spec/json/scheduletreenode.md), [CoordinateContainer](spec/json/coordinatecontainer.md), [CoordinateInfo](spec/json/coordinateinfo.md) |
+| Operations | [ComputeOperation](spec/json/computeoperation.md), [ConstantInfo](spec/json/constantinfo.md) |
+| | [Reference documents](spec/reference.md) |
+
+Non-normative introductory material, worked examples and tuning guidance are in
+[`guide/`](guide/) and form no part of the contract.
 
 ### SuperDSC-Bundle intermediate representation in mlir
 
@@ -124,290 +226,89 @@ The loop bound should be a constant. Symbolic loop bound will be enhanced in the
 
 ### `sdsc.json` filling
 
-The individual fields of the SuperDSC to express an operation and its core mapping is described below:
-* Each SuperDSC contains a vector to express core work mapping for an operation.
-  * Field: `sdsc.dscs_`
-  * With balanced work division, only one entry in the vector is needed
-    * `sdsc.dscs_[0]`
-  * **DesignSpaceConfig can represented BOTH deep learning operators and data-shuffle operations** (stick-breaking, non-stick breaking, gather, scatter)
-* Operation(s) to perform: `sdsc.dscs_[0].computeOp_`
-  * High level operation selection, like GELU, or BATCHMATMUL
-    * Field `OpFuncs opFuncName` in `sdsc.dscs_[0].computeOp_[0]`
-  * Set the format to execute the operation in (DL16, FP32, …)
-    * Field `DataFormats dataFormat_` in `sdsc.dscs_[0].computeOp_[0].attributes_`
-  * List input/output tensors involved with the op
-    * Fields `std::vector<LabeledDsInfo*> inputLabeledDs`, `std::vector<LabeledDsInfo*> outputLabeledDs` and `std::vector<LabeledDsInfo*> indirectAccessIndexLabeledDs`
-* Work division across cores
-  * cores involved
-    * int `numCoresUsed_` in `sdsc`
-    * int `numCoresUsed_` in `sdsc.dscs_[0]`
-    * `std::vector<int> coreIdsUsed_` in `sdsc.dscs_[0]`
-    * `std::unique_ptr<FoldDimProp>` `coreFoldProp_`, `coreletFoldProp_` in `sdsc`
-      * for core fold, factor=maxCoreId
-      * for corelet fold, factor=2
-      * use these FoldDimProps when initializing any FoldManager below
-  * work division
-    * number of slices per dimension
-      * `std::map<PrimaryDimTypes, int> numWkSlicesPerDim_` in sdsc
-    * core to slice mapping per dimension
-      * `std::map<int, std::map<PrimaryDimTypes, int>> coreIdToWkSlice_` in sdsc
-  * fill data stage parameters
-    * total sizes per dimension (across all cores)
-      * `DataStructDims N_` in `sdsc.dscs_[0]`
-    * sizes per dimension for a single core
-      * `std::map<int, dsc2::DataStage> dataStageParam_` in `sdsc.dscs_[0]`
-    * add one entry with key 0, and fill `ss_` and `el_` with same data (name should be “core”)
-    * for window/padded operations, add padding information in both datastages above
-      * `std::map<PrimaryDimTypes, DimPaddingSizes> paddingSizes_` in `DataStructDims`
-      * capture information about front/back padding, stride, related kernel dimension
-      * if a padded dimension is chunked across cores, set front/back padding to -1 in “core” datastage
-* Input and Output tensors
-  * add one entry in `std::vector<LabeledDsInfo> labeledDs_` in `sdsc.dscs_[0]`
-  * add one AllocateNode in `sdsc.dscs_[0].scheduleTree_`
-  * set data format (dl16, fp32, etc)
-    * DataFormats dataFormat_ in `sdsc.dscs_[0].labeledDs_[x]`
-  * memory residency (HBM vs LX)
-    * `SenComponents component_` in AllocateNode
-  * start address per core
-    * `FoldManager<int64_t> startAddressCoreCorelet_` in AllocateNode
-    * first fold is for cores, set as Map fold type
-    * second fold is for corelets, set as Const fold type
-    * When the start address is symbolic, set `isStartAddrSymbolic_` boolean to True: 
-  * layout
-    * stick layout/sizes
-      * add entry in `std::map<DsTypes, PrimaryDsInfo> primaryDsInfo_` in `sdsc.dscs_[0]`
-      * fill `std::vector stickDimOrder_` and `std::vector stickSize_` in `primaryDsInfo_` entry
-      * multiple tensors can share same `primaryDsInfo_` entry if they have same stick layout
-    * Layout outside the stick
-      * fill `std::vector<PrimaryDimTypes> layoutDimOrder_` in `primaryDsInfo` and `AllocateNode`
-      * fill `std::vector<int> maxDimSizes_` in `AllocateNode`
-        * set all to -1 (unbound) or to the page size in case of paged value tensor
-        * order matches `layoutDimOrder_` in `AllocateNode`
-    * back-gaps
-      * fill `std::map<PrimaryDimTypes, std::map<int, int>> backGapCore_` in `AllocateNode` with the gaps in number of elements
-      * primary key is the dimension in which to apply the gap
-      * secondary `int` key is the core id
-        * useful when the gap is present in an LX allocation
-        * for HBM allocations, set to -1
-      * only back-gaps are considered, as front gaps should be handled by simply moving forward the start address
-    * scale per dim (to represent reduction/broadcast)
-      * 1 is normal, -1 is reduced/broadcasted, -2 is reduced/broadcasted stick dimension
-      * `std::vector<double> scale_` in `sdsc.dscs_[0].labeledDs_[x]`
-      * order matches layoutDimOrder_ in primaryDsInfo
-    * For indirectly accessed tensors (e.g. Paged tensors)
-      * Fill maxDimSizes_ in AllocateNode of value tensor to set page size
-      * Mark value/index allocations as such and link them to each other
-        * enum class `IndirectAllocType indirectAllocType_` in AllocateNode
-        * `AllocateNode- relatedIndirectAccessAlloc_` in AllocateNode
-  * Tensor coordinates per dimension
-    * `CoordinateType<CoordinateBaseType> allocateCoordinates_` in AllocateNode
-    * coordinates arrangement is expressed through a sequence of nested simple affine expressions (alpha*index + beta)
-      * “factor” is the cardinality of the fold
-    * There is no limit on the number of element arrangement folds
-    * The combined factor (multiplied) should correspond to the number of elements in that dimension for the tensor
-    * Example:
-      * coordinate sequence: 0, 1, 2, 3, 64, 65, 66, 67, 4, 5, 6, 7, 68, 69, 70, 71
-      * coordinates arrangement (outer to inner)
-        * alpha=4, beta=0, factor=2
-        * alpha=64, beta=0, factor=2
-        * alpha=1, beta=0, factor=4
-      * coordinates also require spatial folds
-        * core fold
-          * for HBM, N/A → alpha=1, factor=1
-          * for LX, alpha=coordinate offset across slices, factor=number of slices in dimension
-        * corelet fold: N/A → alpha=1, factor=1
-        * row fold: N/A → alpha=1, factor=1
-      * **NOTE**: the tensor allocation need NOT be compatible with compute work division i.e, data in one core is directly available for compute in another core. The backend compiler will ensure proper data movement across cores. This functionality is not yet available in the backend, it will be implemented in a future iteration.
-* Symbolic information
-  * Link dsc dimensions to symbols
-    * `std::map<PrimaryDimTypes, std::vector<VariableSymbol>> dimToSymbolMapping_` in `sdsc.dscs_[0]`
-      * only fill one VariableSymbol per dimension
-      * `VariableSymbol` should be a value coming from class `VariableDefinition`
-  * in each datastage, fill max value and granularity for symbolic dimensions
-    * `std::map<PrimaryDimTypes, SymbolicDimInfo> symbolicDimInfo_` in DataStructDims
-  * if a symbolic dimension is divided across cores:
-    * number of slices must be a divisor of granularity
-    * max and granularity in datastages should be scaled accordingly
-    * start addresses per core will need to be symbolic
-      * in AllocateNode fill `FoldManager<int64_t> startAddressCoreCorelet_` with VariableSymbol entries
-      * set `bool isStartAddrSymbolic_`
-* Constants
-  * if dataflow requires a constant value to be provided by frontend, a constantInfo entry is needed
-  * `std::map<int, dsc2::ConstantInfo> constantInfo_` in `sdsc.dscs_[0]`. Key is irrelevant. Fields to fill:
-    * `std::string name_` as agreed with ddl for that operation
-    * `DataFormats dataFormat_`
-    * `FoldManager<std::vector<uint32_t>> data_`  single constant value in binary format encoded as the dataformat specified above
-      * do not replicate the binary encoding to fill the 32 bits if the data format is smaller
-      * only fill one entry in the vector
-      * first fold is for cores, set as Const fold type if same for all cores, set as Map if value changes across cores (very unlikely)
-      * second fold is for corelets, set as Const fold type
+Each `sdsc_*.json` file describes one Spyre operation. The nesting is not obvious
+from a field-by-field reference, so the overall shape is given here; the
+field-level contract, including every constraint on how these fields are filled,
+is in [`spec/json/`](spec/json/).
 
-### Supported OpFuncs in `sdsc.json`
+```
+{
+  "<operation name>": {                     // SuperDsc
+    "numCoresUsed_":  <int>,
+    "coreFoldProp_":     { "factor_": <int>, "label_": "core" },
+    "coreletFoldProp_":  { "factor_": 2,     "label_": "corelet" },
+    "dscs_": [                              // one entry per work division
+      { "<dsc name>": {                     // DesignSpaceConfig
+          "computeOp_":  [ { "opFuncName": "<op>", "attributes_": { ... } } ],
+          "labeledDs_":  [ { ... } ],       // tensors
+          "primaryDsInfo_":   { "<ROLE>": { "stickDimOrder_": [...], ... } },
+          "N_":               { ... },      // total dims, all cores
+          "dataStageParam_":  { "0": { "name_": "core", "ss_": {...}, "el_": {...} } },
+          "constantInfo_":    { "0": { "name_": "...", ... } },
+          "scheduleTree_":    [ { "nodeType_": "allocate", ... } ]
+      } }
+    ]
+  }
+}
+```
 
-OpFuncs are specified within sdsc.json as field `OpFuncs opFuncName` in `sdsc.dscs_[0].computeOp_[0]`.
+A `dscs_` entry is an array element whose value is an object keyed by an arbitrary
+DSC name — both levels are required. With balanced work division a single entry is
+enough. `DesignSpaceConfig` represents both deep-learning operators and
+data-shuffle operations (stick-breaking, non-stick-breaking, gather, scatter).
 
-| Category | OpFunc enum | OpFunc string | Op Precision | Constants | Notes
-| --- | --- | --- | -- | -- | -- |
-|  Matmul | BATCHMATMUL_FP8_FWD |  "batchmatmulfp8" | Inputs: FP8<1,4,3>, Output: DF16
-|         | BATCHMATMUL_FWD |   "batchmatmul" | DF16
-|         | BATCHMATMUL_INT4_FWD  |   "batchmatmulint4" | Inputs: INT4, Output: DF16
-|         | BATCHMATMUL_INT8_FWD  |   "batchmatmulint8" | Inputs: INT8, Output: DF16 (scaled)
-| Convolution | CONV2D_FP8_FWD  |   "conv2dfp8" | Inputs: FP8<1,4,3>, Output: DF16
-|         | CONV2D_FWD  |   "conv2d" | DF16
-|         | CONV2D_INT4_FWD  |   "conv2dint4" | Inputs: INT4, Output: DF16
-|         | CONV2D_INT8_FWD  |   "conv2dint8" | Inputs: INT8, Output: DF16 (scaled)
-|  Broadcast    |  ADD  |   "add"  | DF16 or FP32 |   | Broadcast supported on any number of dimensions and on one or both inputs
-|         | BATCHNORM_FWD  |   "batchnormfwd" | DF16 or FP32 
-|         | BIASADD  |   "biasadd" | DF16 or FP32 
-|         | EQUAL  |   "equal" | DF16 or FP32 
-|         | FNMS  |   "fnms" | DF16 or FP32 
-|         | GREATEREQUAL  |   "greaterequal" | DF16 or FP32 
-|         | LAYERNORM_NORM  |   "layernormnorm" | DF16 or FP32 
-|         | LESSEREQUAL  |   "lesserequal" | DF16 or FP32 
-|         | MAXIMUM  |   "maximum" | DF16 or FP32 
-|         | MINIMUM  |   "minimum" | DF16 or FP32 
-|         | MUL  |   "mul" | DF16 or FP32 
-|         | NOTEQUAL  |   "notequal" | DF16 or FP32 
-|         | REALDIV  |   "realdiv" | DF16 or FP32 
-|         | REVSUB  |   "revsub" | DF16 or FP32 
-|         | SUB  |   "sub" | DF16 or FP32 
-|         | WHERE3  |   "where3" | DF16 or FP32 
-|  Unary  | ABS  |   "abs" | DF16 or FP32 
-|         | CLIP_FWD  |   "clip"  |  DF16 or FP32 |  `clipMin`, `clipMax`: minimum and maximum values to clip at
-|         | EXP_FWD  |   "exp"  | DF16 or FP32 
-|         | FAST_EXP_FWD  |   "fastexp" | DF16
-|         | FAST_SIGMOID_FWD  |   "fastsigmoid" | DF16
-|         | FLOOR  |   "floor" | DF16 or FP32
-|         | GELU_FWD  |   "gelufwd" | DF16
-|         | IDENTITY  |   "identity" | DF16 or FP32 
-|         | LAYERNORM_SCALE  |  "layernormscale"  | DF16 or FP32 | `eps`: a small value added to the denominator in the calculation of layernorm for numerical stability
-|         | LEAKYRELU_FWD  |  "leakyrelufwd" | DF16
-|         | LOG_FWD  |   "log" | DF16
-|         | MISH_FWD  |   "mish" | DF16
-|         | NEG  |   "neg" | DF16 or FP32 
-|         | RECIPROCAL  |   "reciprocal" | DF16 or FP32 
-|         | RELU_FWD  |   "relufwd" | DF16 or FP32 
-|         | RELU6_FWD  |   "relu6fwd" | DF16
-|         | RSQRT  |   "rsqrt" | DF16
-|         | SIGMOID_FWD  |   "sigmoid" | DF16 or FP32 
-|         | SOFTPLUS  |   "softplus"  | DF16 | `softplusBeta`: value for the Softplus formulation <br>`softplusThresh`: values above this revert to a linear function
-|         | SILU_FWD  |   "silu" | DF16 or FP32 
-|         | SQRT_FWD  |   "sqrt" | DF16
-|         | TANH_FWD  |   "tanh" | DF16
-|  Reduction  | ABSMAX_NONSTICK  |   "absmaxnonstick" | DF16 or FP32 
-|         | ABSMAX  |   "absmax" | DF16 or FP32 
-|         | EXX2_ZEROMEAN  |   "exx2_zeromean" | DF16 or FP32 
-|         | EXX2  |   "exx2"  | DF16 or FP32  | `exx2scale` 
-|         | MAX_NONSTICK  |   "maxnonstick" | DF16 or FP32 
-|         | MAX  |   "max" | DF16 or FP32 
-|         | MEAN_NONSTICK  |   "meannonstick" | DF16 or FP32 | `scaling_factor`: reciprocal of the number of elements that are reduced, combined across all the reduction dimensions
-|         | MEAN  |   "mean"  | DF16 or FP32 | `scaling_factor`: reciprocal of the number of elements that are reduced, combined across all the reduction dimensions
-|         | MIN_NONSTICK  |   "minnonstick" | DF16 or FP32 
-|         | MIN  |   "min" | DF16 or FP32 
-|         | QUANT_SCALE_PER_TOKEN_FP8  |   "quantscalepertokenfp8"  | DF16 | `clipMin`, `clipMax`: minimum and maximum values to clip abs(input) distribution, typically smallest and largest positive values in the unquantized (input tensor) datatype <br>`mulConst`: reciprocal of the maximum value in the quantized datatype (for FP8<1,4,3> this is `1/448`)
-|         | QUANT_SCALE_PER_TOKEN  |   "quantscalepertoken" | DF16
-|         | SUM_NONSTICK  |   "sumnonstick" | DF16 or FP32 
-|         | SUM  |   "sum" | DF16 or FP32 
-|  Pooling  | AVGPOOL_FWD  |   "avgpoolfwd" | DF16 | `nmap`: reciprocal of the product of kernel size (`1/(kh*kw)`)
-|         | AVGPOOL_NMAP_FWD |   "avgpoolnmapfwd" | DF16 
-|         | DEPTHWISE_CONV_FWD  |   "depthwiseconv2dnative" | DF16 
-|         | MAXPOOL_FWD  |   "maxpoolfwd" | DF16
-| Scan    | MASK_BY_INDEX  |   "maskbyindex" | DF16 or FP32 
-|         | TOPK_INDEX  |   "topkindex" | DF16 or FP32 
-|         | TOPK_VALUE  |   "topkvalue" | DF16 or FP32 
-| Quantization | CSQ_INT4_WT  |   "csqint4wt"   | Inputs: DF16 Output: INT4 |  `scaleact`: pre-quantization scale factor <br>`shiftact`: pre-quantization offset  |  Apply scale and shift to DL16 and quantize to INT4. Pack elements from four input sticks in a dimension different from the input stick dimension, alternating after every element
-|         | CSQ_INT4  |   "csqint4"  | Inputs: DF16 Output: INT4  |  `scaleact`: pre-quantization scale factor <br>`shiftact`: pre-quantization offset  |  Apply scale and shift to DL16 and quantize to INT4. Alternating every 8 elements, pack elements from four input sticks: first two sticks in the same dimension as the input stick dimension, then two such groups taken across a dimension different from the input stick dimension
-|         | CSQ_INT8_CH  |   "csqint8ch"  | Inputs: DF16 Output: INT8  |  `scaleact`: pre-quantization scale factor <br>`shiftact`: pre-quantization offset  |  Apply scale and shift to DL16 and quantize to INT8. Pack elements from two input sticks in the same dimension as the input stick dimension, alternating every 8 elements
-|         | CSQ_INT8_MB  |   "csqint8mb"  | Inputs: DF16 Output: INT8 |  `scaleact`: pre-quantization scale factor <br>`shiftact`: pre-quantization offset  |  Apply scale and shift to DL16 and quantize to INT8. Pack elements from two input sticks in a dimension different from the input stick dimension, alternating  every 8 elements
-|         | CSQ_INT8_WT  |   "csqint8wt"  | Inputs: DF16 Output: INT8 |  `scaleact`: pre-quantization scale factor <br>`shiftact`: pre-quantization offset  |  Apply scale and shift to DL16 and quantize to INT8. Pack elements from two input sticks in a dimension different from the input stick dimension, alternating after every element
-|         | DL16TOFP32  |   "dl16tofp32"   | Input: DF16 Output: FP32 |  |  Convert DL16 to FP32. For every stick of input, two sticks will be produced
-|         | FP32TODL16  |   "fp32todl16"   | Input: FP32 Output: DF16 |  |  Quantize FP32 to DL16. Pack elements from two input sticks in the same dimension as the input stick dimension, alternating every 8 elements
-|         | FP8TODL16  |   "fp8todl16"   | Input: HFP8 Output: DF16 |  |  Convert FP8<1,4,3> to DL16. For every stick of input, two sticks will be produced
-|         | Q_FP8_CH  |   "qfp8ch"   | Input: DF16 Output: FP8<1,4,3> |  |  Quantize DL16 to FP8<1,4,3>. Pack elements from two input sticks in the same dimension as the input stick dimension, alternating every 8 elements
-|         | Q_FP8_MB  |   "qfp8mb"   | Input: DF16 Output: FP8<1,4,3> |  |  Quantize DL16 to FP8<1,4,3>. Pack elements from two input sticks in a dimension different from the input stick dimension, alternating every 8 elements
-|         | Q_FP8_WT  |   "qfp8wt"   | Input: DF16 Output: FP8<1,4,3> |  |  Quantize DL16 to FP8<1,4,3>. Pack elements from two input sticks in a dimension different from the input stick dimension, alternating after every element
-| Stick Altering Data shuffle | ReStickifyOpHBM | "ReStickifyOpHBM" | DF16 | | Change the stick composition from one dimension to another dimension. Only one dimension is allowed in input and output stick layouts.
+Where to find each part of the contract:
 
+| To fill | See |
+|---|---|
+| The operation and its attributes | [ComputeOperation](spec/json/computeoperation.md) |
+| Core counts and fold factors | [FoldProperty](spec/json/foldproperty.md), [FoldManager](spec/json/foldmanager.md) |
+| Work division across cores | [DesignSpaceConfig](spec/json/designspaceconfig.md) |
+| Per-core tile sizes | [DataStageParam](spec/json/datastageparam.md), [DataStructDims](spec/json/datastructdims.md) |
+| Tensors, formats and `scale_` | [LabeledDataStructure](spec/json/labeleddatastructure.md) |
+| Stick and memory layout | [PrimaryDsInfo](spec/json/primarydsinfo.md), [Stick Layout Constraints](spec/json/stick-layout-constraints.md) |
+| Padding for window operations | [Padding](spec/json/padding.md) |
+| Allocations, addresses and gaps | [ScheduleTreeNode](spec/json/scheduletreenode.md) |
+| Coordinates | [CoordinateContainer](spec/json/coordinatecontainer.md), [CoordinateInfo](spec/json/coordinateinfo.md) |
+| Constants | [ConstantInfo](spec/json/constantinfo.md) |
+| Symbolic dimensions | [DesignSpaceConfig](spec/json/designspaceconfig.md), [DataStructDims](spec/json/datastructdims.md) |
 
-### Stick constraints for the operations
+#### Coordinate arrangement
 
+Tensor coordinates per dimension are expressed as a sequence of nested affine
+expressions, `alpha * index + beta`, in `allocateCoordinates_`. The combined
+factor across all folds must equal the number of elements in that dimension.
 
-Each class of operation imposes constraints on the stick composition of its constituent tensors restricting which dimension can be present in the stick. Tensors will need to be padded to meet the stick constraints. There are noconstraints on the tensor layout beyond a stick.
+The following illustrates the encoding and is not itself normative. For the
+coordinate sequence
 
-Note: Stick constraints in an operation can cause a ripple effect---a tensor may need to padded even in its non-stick dimension because that dimension appers in the stick of another tensor feeding to the same operation. This is needed to ensure span of a dimension is consistent across all tensors.
+    0, 1, 2, 3, 64, 65, 66, 67, 4, 5, 6, 7, 68, 69, 70, 71
 
-#### BatchMatmul
-The BatchMatmul op takes 2 inputs (Input1, Input2) and produces an output (Output1). It has 4 types of semantic dimensions:
-* `reduction_dim`: Dimension that is present in Input1, Input2 and NOT in Output1. There can be only be a single dimension in this category. Note: this dimension gets reduced as part of the dot-product.
-* `generated_dim`: Dimension that is present in Input2, Output1 and NOT in Input1. There can be only be a single dimension in this category.
-* `preserved_dim`: Dimension that is present in Input1 and Output1 and NOT in Input2. There can be upto 2 dimensions in this category.
-* `noreuse_dim`: Dimension that is present in all tensors - Input1, Input2 and Output1. There can be upto 2 dimensions in this category.
+the arrangement, outermost to innermost, is
 
-The following are the stick constraints that different precisons.
-* Output1 tensor:
-  * Stick composed of [`generated_dim`=64]. Note: Output1 is always in DF16 precision
-* Input1 tensor:
-  * DF16: Stick composed of [`reduction_dim`=64]
-  * FP8/INT8: Stick composed of [`reduction_dim`=128]
-  * INT4: Stick composed of 2 dimensions as: [`reduction_dim`=16, `preserved_dim`=2, `reduction_dim`=8]. Note: total of 256 elements in each stick.
-* Input2 tensor:
-  * DF16: Stick composed of [`generated_dim`=64]
-  * FP8/INT8: Stick composed of [`reduction_dim`=2, `generated_dim`=64]
-  * INT4: Stick composed of [`reduction_dim`=4, `generated_dim`=64]
+| alpha | beta | factor |
+|---|---|---|
+| 4 | 0 | 2 |
+| 64 | 0 | 2 |
+| 1 | 0 | 4 |
 
-Note: In Matmul, Input2 must also be padded along `reduction_dim` (which is not in its stick). This is because `reduction_dim` is part of the stick of Input1 and Input2 therefore needs to be padded for their dimension spans to be consistent.
+Tensor allocation need not match the compute work division: data resident on one
+core may be consumed by an operation on another, and the backend inserts the
+required movement.
 
-#### Convolution
-Same as matmul with the only difference of the INT4 Input1 stick layout: [`reduction_dim`=16, `W`=2, `reduction_dim`=8], where `W` is the width in pixels according to `NHWC` notation.
+### Operations, precisions and constants
 
-#### Reduction
-For sum/max/min/mean/absmax/exx2:
-* the reduction dimension should be the only dimension in the stick
-* same stick layout in input and output (output will have scale=-2 for reduced dimension)
+The permitted values of `opFuncName`, the precision each operation runs in, and the
+constants each requires are specified in
+[Supported Operations](spec/json/computeoperation.md#supported-operations).
 
-For sum-nonstick/max-nonstick/min-nonstick/mean-nonstick/absmax-nonstick (there is no nonstick version of exx2):
-* any number of non-reduction dimensions in the stick is allowed
-* same stick layout in input and output
+### Layout and work-division constraints
 
-#### Unary and Broadcast operations
-Any stick layout is acceptable, but all inputs and output must have same stick layout.
-If a stick dimension has broadcast in a tensor, all stick dimensions of that tensor must have broadcast.
-If a stick dimension has broadcast in all tensors (inputs and output), then its size in the SDSC must be set to the number of elements that one stick would have if that dimension actually existed.
-
-#### Scan
-
-In top-k, neither the reduction dimension nor k can be in the stick, any number of other dimensions can be in the stick
-
-#### layernormscale/layernormnorm/exx2
-Stick should only have the normalization dimension in it
-
-#### Pooling
-Window dimensions not allowed in the stick, any number of other dimensions can be in the stick
-
-#### Quantization operations
-For all down-casting operations
-* the input should always have only one dimension in the stick (DL16: [`inpdim`=64], FP32: [`inpdim`=32])
-* for the `wt` family of quantizations, output stick should have one more dimension innermost (INT8/FP8: [`otherdim`=2,`inpdim`=64], INT4: [`otherdim`=4,`inpdim`=64])
-* for the `mb` family of quantizations, output stick should have one more dimension inserted at the slice level (INT8/FP8: [`inpdim`=8, `otherdim`=2, `inpdim`=8], INT4: [`inpdim`=16, `otherdim`=2, `inpdim`=8])
-* for the `ch` family of quantizations, output stick still only has one dimension, just more elements (INT8/FP8: [`inpdim`=128])
-
-For all up-casting operations, both input and output should have the same only one dimension in the stick.
-
-#### Stick Altering Data shuffle
-Restickify can only operate on input sticks with elements from a single dimension d1 and produce output sticks with elements from a single dimension d2. There is no restriction on which d1 and d2 dimensions are picked.
-
-### Core work division constraints for the operations
-For all operations, any constituent dimension is allowed to be split across cores. The following constraints apply to the work assigned per core:
-* For all data tensors, The work assigned must be multiple of stick size in any given dimension. This restriction does not apply to index tensors used for indirect access.
-* The span of addresses accessed from DDR for any given tensor must not exceed 256MB.
-* For all index tensors used for indirect access, for each dimension present in the stick, the work assigned to a core should span an intergral number of sticks or <1 stick.
-
-When operation involves reduction across multiple dimensions, only one of its reduction dimensions is allowed to be split across cores. There is no constraint on operations with a single reduction dimension.
+Stick-layout constraints per operation category, and the constraints on how work may
+be divided across cores, are specified in
+[Stick Layout Constraints](spec/json/stick-layout-constraints.md).
 
 ## Examples
 
-Multiple examples in increasing order of complexity are available [here](examples/).
-
-## **Metrics **
-* Ability to express all torch operators that are mappable to AIU (post-inductor transformations and decompositions)
-* Ability to express desired computation mapping across cores for each operation
+Worked examples, in increasing order of complexity, are in [`examples/`](examples/).
+They illustrate the format and are not themselves normative.
