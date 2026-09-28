@@ -189,5 +189,5 @@ The step-by-step procedure for filling a document is in
 
 ## Examples
 
-Worked examples are in [`guide/`](guide/) and [`examples/`](examples/). They
-illustrate the format and are not normative.
+Worked examples are in [`guide/`](guide/). They illustrate the format and are not
+normative.

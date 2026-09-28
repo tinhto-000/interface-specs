@@ -2,6 +2,10 @@
 
 ## Single Operation (No Symbols)
 
+Start addresses, work division, sizes and operations are all filled directly in the
+JSON document, so nothing needs to be passed from the bundle MLIR. The bundle only
+has to say that one SDSC executes.
+
 **Use Case:** Execute a single standalone operation with no dynamic address substitution.
 
 **MLIR:**
@@ -17,28 +21,44 @@ module {
 
 ## Sequential Operations (Kernel Fusion)
 
-**Use Case:** Complex kernel decomposition — multiple operations chained in sequence within the same function (e.g., softmax).
+**Use Case:** Complex kernel decomposition — several operations chained in sequence
+within the same function (e.g., softmax).
 
 ![Softmax equation](figures/softmax_equation.png)
 
 *The softmax function: for each element x_i, divide its exponent by the sum of
-exponents of all elements.* Each step below is one SDSC document.
+exponents of all elements.*
+
+Softmax is realized by decomposing it into six operations specified in sequence by a
+single bundle. Here shapes and start addresses are fixed, so no symbol values are
+passed to the SDSCs.
 
 **MLIR:**
 
 ```mlir
 module {
-  func.func @softmax() {
-    sdscbundle.sdsc_execute () {sdsc_filename="max.json"}
-    sdscbundle.sdsc_execute () {sdsc_filename="sub.json"}
-    sdscbundle.sdsc_execute () {sdsc_filename="exp.json"}
-    sdscbundle.sdsc_execute () {sdsc_filename="sum.json"}
-    sdscbundle.sdsc_execute () {sdsc_filename="reciprocal.json"}
-    sdscbundle.sdsc_execute () {sdsc_filename="mul.json"}
+  func.func @softmax_no_sym() {
+    // y = softmax(x, dim=1)
+
+    // x_max = max(x, dim=1)
+    sdscbundle.sdsc_execute () {sdsc_filename="sdscMax.json"}
+    // x_sub = x - x_max
+    sdscbundle.sdsc_execute () {sdsc_filename="sdscSub.json"}
+    // x_exp = exp(x_sub)
+    sdscbundle.sdsc_execute () {sdsc_filename="sdscExp.json"}
+    // x_sum = sum(x_exp, dim=1)
+    sdscbundle.sdsc_execute () {sdsc_filename="sdscSum.json"}
+    // x_recpr = 1/x_sum
+    sdscbundle.sdsc_execute () {sdsc_filename="sdscReciprocal.json"}
+    // y = x_sub * x_recpr
+    sdscbundle.sdsc_execute () {sdsc_filename="sdscMul.json"}
+
     return
   }
 }
 ```
+
+Each `sdsc_execute` names its own document; the backend runs them in program order.
 
 ## Symbolic Addresses
 
@@ -378,6 +398,9 @@ module {
 
 ## Loop with Dynamic Addresses
 
+
+Start addresses change on every invocation based on the loop iteration, while the
+tensors' base addresses stay constant and known at compile time.
 **Use Case:** Iterative processing with address offsets — the same operation is applied repeatedly with a different memory address at each iteration.
 
 **MLIR:**
