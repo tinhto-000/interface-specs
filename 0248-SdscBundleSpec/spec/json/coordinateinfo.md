@@ -65,5 +65,4 @@ the spatial hierarchy.
 
 ---
 
-| [← Previous: CoordinateContainer](coordinatecontainer.md) | [↑ Table of Contents](README.md) | [Next: ComputeOperation →](computeoperation.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../../SuperDSC-Bundle.md)

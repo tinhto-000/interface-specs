@@ -80,5 +80,4 @@ to establish which layout applies to a given tensor in the `labeledDs_` array.
 
 ---
 
-| [← Previous: MemoryOrganization](memoryorganization.md) | [↑ Table of Contents](README.md) | [Next: DataStructDims →](datastructdims.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../../SuperDSC-Bundle.md)

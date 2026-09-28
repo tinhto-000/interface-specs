@@ -59,11 +59,11 @@ The API consists of two primary components:
 1. **MLIR Bundle File** (`.mlir`) — Orchestrates execution flow and symbol management
 2. **SDSC JSON Files** (`.json`) — Defines individual operations and their core mappings
 
-All `sdsc_*.json` files must conform to the [SDSC Bundle JSON Schema](sdscbundle-schema.json).
+All `sdsc_*.json` files must conform to the [SDSC Bundle JSON Schema](../spec/sdscbundle-schema.json).
 The schema provides machine-readable type constraints, required-field enforcement, and enum
 validation for every object in the hierarchy. It is the normative reference for structural
 correctness; semantic constraints (cross-field consistency) are described in the individual
-object pages linked from [SDSC JSON API](SDSC-json-api.md).
+object pages linked from [SDSC JSON API](../spec/json/SDSC-json-api.md).
 
 ## Important Notes
 
@@ -83,5 +83,5 @@ DesignSpaceConfig can represent **BOTH** deep learning operators AND data-shuffl
 
 ---
 
-| [↑ Table of Contents](README.md) | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | [Next: Bundle API →](MLIR-bundle-API.md) |
+| [↑ Table of Contents](../SuperDSC-Bundle.md) | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | [Next: Bundle API →](../spec/dialect/MLIR-bundle-API.md) |
 |:--|:--:|--:|

@@ -391,5 +391,4 @@ The value tensor uses `dsType_: "KERNEL"` in `labeledDs_`; the index tensor uses
 
 ---
 
-| [← Previous: Complete Example (JSON)](complete-example.md) | [↑ Table of Contents](README.md) | [Next: Reference →](reference.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../SuperDSC-Bundle.md)

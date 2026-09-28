@@ -47,5 +47,4 @@ The stick dim's own widening stays undeclared.
 
 ---
 
-| [← Previous: Padding](padding.md) | [↑ Table of Contents](README.md) | [Next: Stick Layout Constraints →](stick-layout-constraints.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../../SuperDSC-Bundle.md)

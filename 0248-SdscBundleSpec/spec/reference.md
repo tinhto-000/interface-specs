@@ -19,5 +19,4 @@
 
 ---
 
-| [← Previous: Indirect Access Example (JSON)](indirect-access-example.md) | [↑ Table of Contents](README.md) | |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../SuperDSC-Bundle.md)

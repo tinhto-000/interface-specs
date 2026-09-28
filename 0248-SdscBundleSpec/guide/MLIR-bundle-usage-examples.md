@@ -19,6 +19,11 @@ module {
 
 **Use Case:** Complex kernel decomposition — multiple operations chained in sequence within the same function (e.g., softmax).
 
+![Softmax equation](figures/softmax_equation.png)
+
+*The softmax function: for each element x_i, divide its exponent by the sum of
+exponents of all elements.* Each step below is one SDSC document.
+
 **MLIR:**
 
 ```mlir
@@ -510,5 +515,4 @@ module {
 
 ---
 
-| [← Previous: MLIR Bundle API](MLIR-bundle-API.md) | [↑ Table of Contents](README.md) | [Next: Complete Example →](MLIR-complete-example.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../SuperDSC-Bundle.md)

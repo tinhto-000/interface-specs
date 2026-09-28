@@ -237,5 +237,4 @@
 
 ---
 
-| [← Previous: ConstantInfo](constantinfo.md) | [↑ Table of Contents](README.md) | [Next: Indirect Access Example →](indirect-access-example.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../SuperDSC-Bundle.md)

@@ -51,11 +51,13 @@ Both `hbm` and `lx` are optional keys; omitting a key is equivalent to
 | `hbm.isPadded` | integer | No | 0 or 1 | 1 = HBM allocation includes padding. See [Padding](padding.md). |
 | `hbm.isZeroPadded` | integer | No | 0 or 1 | 1 = padded region in HBM is zero-filled. Only meaningful when `isPadded: 1`. |
 | `hbm.allocateNode_` | string | No | Must match a `ScheduleTreeNode.name_` | Name of the `ScheduleTreeNode` that allocates this tensor in HBM. |
+| `hbm.dsOffset` | integer | No | — | Byte offset of this tensor within its allocation. Set alongside `allocateNode_`. |
 | `lx` | object | No | — | LX per-core local scratchpad slot. Omit or set `isPresent: 0` when the tensor is not in LX. |
 | `lx.isPresent` | integer | Yes (if `lx` present) | 0 or 1 | 1 = tensor resides in the LX scratchpad. Must match `component_: "lx"` in the corresponding `ScheduleTreeNode`. |
 | `lx.isPadded` | integer | No | 0 or 1 | 1 = LX allocation includes padding. See [Padding](padding.md). |
 | `lx.isZeroPadded` | integer | No | 0 or 1 | 1 = padded region in LX is zero-filled. Only meaningful when `isPadded: 1`. |
 | `lx.allocateNode_` | string | No | Must match a `ScheduleTreeNode.name_` | Name of the `ScheduleTreeNode` that allocates this tensor in LX. |
+| `lx.dsOffset` | integer | No | — | Byte offset of this tensor within its allocation. Set alongside `allocateNode_`. |
 
 ## Example
 
@@ -79,5 +81,4 @@ Both `hbm` and `lx` are optional keys; omitting a key is equivalent to
 
 ---
 
-| [← Previous: LabeledDataStructure](labeleddatastructure.md) | [↑ Table of Contents](README.md) | [Next: PrimaryDsInfo →](primarydsinfo.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../../SuperDSC-Bundle.md)

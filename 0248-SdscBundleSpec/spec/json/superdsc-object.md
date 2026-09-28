@@ -140,5 +140,4 @@ In practice, the standard step tuple for single-operation bundles is `[-1, 0, 0,
 
 ---
 
-| [← Previous: Object Hierarchy](JSON-object-Hierarchy.md) | [↑ Table of Contents](README.md) | [Next: FoldProperty →](foldproperty.md) |
-|:--|:--:|--:|
+[↑ SuperDSC-Bundle specification](../../SuperDSC-Bundle.md)

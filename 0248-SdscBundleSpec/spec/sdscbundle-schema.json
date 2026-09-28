@@ -650,6 +650,7 @@
       "description": "Memory slot presence and padding flags for a single memory type (HBM or LX).",
       "required": ["isPresent"],
       "properties": {
+        "dsOffset": {"type": "integer", "description": "Byte offset of this tensor within its allocation. Set alongside allocateNode_."},
         "isPresent":    {"type": "integer", "enum": [0, 1], "description": "1 = tensor resides in this memory, 0 = absent"},
         "isPadded":     {"type": "integer", "enum": [0, 1], "description": "1 = allocation includes padding. See DimPaddingSizes for padding details."},
         "isZeroPadded": {"type": "integer", "enum": [0, 1], "description": "1 = padded region is zero-filled. Only meaningful when isPadded is 1."},
@@ -716,6 +717,11 @@
       "description": "Describes a single compute op executed on the Spyre device. Appears in the computeOp_ array of DesignSpaceConfig. Tensor references in inputLabeledDs and outputLabeledDs use the '<dsName_>-idx<ldsIdx_>' composite key from LabeledDataStructure.",
       "required": ["exUnit", "opFuncName", "inputLabeledDs", "outputLabeledDs"],
       "properties": {
+        "location": {
+          "type": "string",
+          "description": "Name of the loop the operation executes in. 'Inner' (the innermost loop) is the only supported value.",
+          "enum": ["Inner"]
+        },
         "exUnit": {
           "type": "string",
           "description": "Execution unit. 'sfp' = Spyre Floating Point unit; 'pt' = Processing Tile array.",
